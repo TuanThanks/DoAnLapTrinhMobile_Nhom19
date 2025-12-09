@@ -1,4 +1,4 @@
-package com.example.myapplication
+package com.example.appandroid
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image

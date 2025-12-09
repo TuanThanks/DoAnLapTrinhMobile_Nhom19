@@ -1,6 +1,4 @@
-package com.example.myapplication
-
-import androidx.lifecycle.ViewModel
+package com.example.appandroid
 
 open class Screen(val route:String) {
     object LoginScreen: Screen("login_screen")
