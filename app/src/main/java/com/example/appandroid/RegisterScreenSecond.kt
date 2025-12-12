@@ -95,8 +95,8 @@ fun RegisterScreenSecond(
 
         // Nút Đăng ký gọi ViewModel
         Button(
-// Dòng code mới đã được sửa
-            onClick = { if (isEnableButton) viewModel.register(email, password, name) },            enabled = isEnableButton,
+            onClick = { if (isEnableButton) viewModel.register(name, email, password) },
+            enabled = isEnableButton,
             modifier = Modifier.fillMaxWidth().height(50.dp),
             colors = ButtonDefaults.buttonColors(containerColor = if(isEnableButton) Color.Blue else Color(0xFFE0E0E0)),
             shape = RoundedCornerShape(25.dp)

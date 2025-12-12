@@ -1,6 +1,9 @@
 package com.example.appandroid.screen
 
+import android.app.Activity
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,17 +17,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import com.example.appandroid.R
 import com.example.appandroid.navigation.ScreenRoutes
 import com.example.appandroid.viewmodel.AuthState
 import com.example.appandroid.viewmodel.AuthViewModel
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
 
 @Composable
 fun LoginScreen(
@@ -38,7 +42,43 @@ fun LoginScreen(
     val context = LocalContext.current
     val authState by viewModel.authState.collectAsState()
 
-    // Lắng nghe trạng thái từ ViewModel
+    // --- CẤU HÌNH GOOGLE SIGN IN ---
+    // Web Client ID lấy từ Google Cloud Console (loại Web Application)
+    val webClientId = "1044564910746-1898f7mk3sa8lboj7fcg28scte0qv3uu.apps.googleusercontent.com"
+
+    val gso = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(webClientId)
+            .requestEmail()
+            .build()
+    }
+
+    val googleSignInClient = remember {
+        GoogleSignIn.getClient(context, gso)
+    }
+
+    // --- XỬ LÝ KẾT QUẢ TRẢ VỀ TỪ GOOGLE ---
+    val launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(ApiException::class.java)
+                val idToken = account.idToken
+                if (idToken != null) {
+                    // Có token rồi -> Gửi cho ViewModel xử lý với Supabase
+                    viewModel.loginWithGoogle(idToken)
+                } else {
+                    Toast.makeText(context, "Không lấy được ID Token Google", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: ApiException) {
+                Toast.makeText(context, "Lỗi Google: ${e.statusCode}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // --- LẮNG NGHE TRẠNG THÁI TỪ VIEWMODEL ---
     LaunchedEffect(authState) {
         when (authState) {
             is AuthState.Success -> {
@@ -66,7 +106,7 @@ fun LoginScreen(
             .background(Color.White),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // ... (Giữ nguyên UI Box close button cũ của bạn) ...
+        // Close Button
         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
             IconButton(onClick = { /* Handle close */ }) {
                 Icon(Icons.Default.Close, contentDescription = "Close")
@@ -77,14 +117,21 @@ fun LoginScreen(
         Text("Đăng nhập để học ngay nhé", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.Black)
         Spacer(modifier = Modifier.height(24.dp))
 
-        // ... (Nút Google giữ nguyên hoặc xử lý sau) ...
+        // --- NÚT GOOGLE (Đã cập nhật onClick) ---
         Button(
-            onClick = { /* TODO: Google Sign In logic */ },
+            onClick = {
+                // Mở cửa sổ chọn tài khoản Google
+                launcher.launch(googleSignInClient.signInIntent)
+            },
             modifier = Modifier.fillMaxWidth().height(50.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDB4437)), // Hardcode màu đỏ google
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDB4437)),
             shape = RoundedCornerShape(25.dp)
         ) {
-            Text("Tiếp tục với Gmail", color = Color.White)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "G+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Tiếp tục với Gmail", color = Color.White, fontWeight = FontWeight.Medium)
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -121,7 +168,7 @@ fun LoginScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // NÚT ĐĂNG NHẬP GỌI VIEWMODEL
+        // NÚT ĐĂNG NHẬP
         Button(
             onClick = {
                 if (isLoginEnabled) {
@@ -131,7 +178,6 @@ fun LoginScreen(
             enabled = isLoginEnabled,
             modifier = Modifier.fillMaxWidth().height(50.dp),
             colors = ButtonDefaults.buttonColors(
-                // Lưu ý: Nếu không có R.color.blue thì thay bằng Color.Blue
                 containerColor = if (isLoginEnabled) Color.Blue else Color(0xFFE0E0E0)
             ),
             shape = RoundedCornerShape(25.dp)
