@@ -5,7 +5,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.example.appandroid.screen.ForgotPasswordScreen
 import com.example.appandroid.screen.HomeScreen
 import com.example.appandroid.screen.LoginScreen
 import com.example.appandroid.screen.RegisterScreenFirst

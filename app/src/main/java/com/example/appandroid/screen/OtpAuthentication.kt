@@ -1,4 +1,4 @@
-package com.example.appandroid
+package com.example.appandroid.screen
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.example.appandroid.R
 import kotlinx.coroutines.delay
 
 @Preview(showBackground = true)
