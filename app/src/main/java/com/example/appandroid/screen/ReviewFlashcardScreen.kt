@@ -29,13 +29,15 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
-import com.example.appandroid.utils.SoundManager // Đảm bảo bạn có class này
+import com.example.appandroid.utils.SoundManager
 import com.example.appandroid.viewmodel.LearnViewModel
 
-// Màu sắc (Nếu chưa có trong project thì giữ lại, nếu có rồi thì import)
+// --- KHAI BÁO MÀU (Thêm MochiGreen/Dark nếu file khác chưa có) ---
 val ReviewGray = Color(0xFFE0E0E0)
 val CorrectGreen = Color(0xFF4CAF50)
 val WrongRed = Color(0xFFF44336)
+// Nếu project bạn đã có file UiTheme chứa 2 màu này thì xóa 2 dòng dưới đi
+
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -44,14 +46,21 @@ fun ReviewFlashcardScreen(
     viewModel: LearnViewModel
 ) {
     val context = LocalContext.current
-    // Lưu ý: Nếu SoundManager chưa có, bạn có thể comment dòng này lại hoặc tạo file utils
     val soundManager = remember { SoundManager(context) }
     val focusManager = LocalFocusManager.current
+
+    // --- LOGIC 1: VỪA VÀO MÀN HÌNH LÀ RESET LỊCH NGAY (HOÃN BINH) ---
+    LaunchedEffect(Unit) {
+        val storage = com.example.appandroid.utils.LocalStorage(context)
+        if (storage.isReminderEnabled()) {
+            com.example.appandroid.utils.ReminderScheduler.scheduleNextReminder(context)
+        }
+    }
 
     // 1. Lấy danh sách review
     val reviewList by viewModel.reviewList.collectAsState()
 
-    // 2. SỬA ĐỔI QUAN TRỌNG: Luôn lấy từ đầu tiên, bỏ currentIndex
+    // 2. Luôn lấy từ đầu tiên
     val currentVocab = reviewList.firstOrNull()
 
     // State nhập liệu
@@ -59,7 +68,7 @@ fun ReviewFlashcardScreen(
     var isChecked by remember { mutableStateOf(false) }
     var isCorrect by remember { mutableStateOf(false) }
 
-    // 3. Reset form khi từ vựng thay đổi (currentVocab đổi = qua từ mới)
+    // 3. Reset form khi từ vựng thay đổi
     LaunchedEffect(currentVocab) {
         userInput = ""
         isChecked = false
@@ -68,8 +77,15 @@ fun ReviewFlashcardScreen(
 
     Scaffold(containerColor = Color.White) { padding ->
         if (reviewList.isEmpty()) {
-            // Hết bài ôn -> Finish Screen
-            // (Nếu hàm FinishScreen của bạn cần soundManager thì truyền vào, không thì bỏ qua)
+            // --- LOGIC 2: HỌC XONG THÌ RESET LỊCH (CHỐT HẠ) ---
+            // Dùng luôn biến 'context' ở trên, không cần tạo 'ctx' mới
+            LaunchedEffect(Unit) {
+                val storage = com.example.appandroid.utils.LocalStorage(context)
+                if (storage.isReminderEnabled()) {
+                    com.example.appandroid.utils.ReminderScheduler.scheduleNextReminder(context)
+                }
+            }
+
             FinishScreen(onBack = { navController.popBackStack() })
         } else {
             currentVocab?.let { vocab ->
@@ -89,13 +105,12 @@ fun ReviewFlashcardScreen(
                             Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.Gray)
                         }
                         Spacer(modifier = Modifier.weight(1f))
-                        // Hiển thị số lượng còn lại
                         Text(text = "Còn: ${reviewList.size}", color = Color.Gray, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(40.dp))
 
-                    // 1. CÂU HỎI
+                    // Câu hỏi
                     Text(text = "Điền từ tiếng Anh", fontSize = 16.sp, color = Color.Gray)
                     Spacer(modifier = Modifier.height(24.dp))
 
@@ -109,7 +124,7 @@ fun ReviewFlashcardScreen(
 
                     Spacer(modifier = Modifier.height(40.dp))
 
-                    // 2. Ô NHẬP LIỆU
+                    // Ô nhập liệu
                     val wordLength = vocab.word.length
 
                     BasicTextField(
@@ -155,7 +170,6 @@ fun ReviewFlashcardScreen(
                         }
                     )
 
-                    // Hiển thị đáp án đúng nếu sai
                     if (isChecked && !isCorrect) {
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
@@ -168,9 +182,8 @@ fun ReviewFlashcardScreen(
 
                     Spacer(modifier = Modifier.weight(1f))
 
-                    // 3. FOOTER BUTTONS
+                    // Footer Buttons
                     if (!isChecked) {
-                        // CHƯA KIỂM TRA
                         Button(
                             onClick = {
                                 if (userInput.isNotBlank()) {
@@ -194,7 +207,7 @@ fun ReviewFlashcardScreen(
                         TextButton(onClick = {
                             isCorrect = false
                             isChecked = true
-                            userInput = vocab.word // Hiện đáp án vào ô
+                            userInput = vocab.word
                             soundManager.playWrong()
                         }) {
                             Text(
@@ -205,17 +218,13 @@ fun ReviewFlashcardScreen(
                             )
                         }
                     } else {
-                        // ĐÃ KIỂM TRA -> HIỆN NÚT TIẾP TỤC
                         Button(
                             onClick = {
-                                // SỬA ĐỔI QUAN TRỌNG:
-                                // Chỉ gọi ViewModel xử lý, không tăng index tay
                                 viewModel.submitReviewResult(
                                     vocabId = vocab.id,
-                                    currentLevel = 1, // Logic lấy level thực tế nên được cập nhật sau
+                                    currentLevel = 1,
                                     isRemembered = isCorrect
                                 )
-                                // ViewModel sẽ xóa từ khỏi list -> list thay đổi -> currentVocab thay đổi -> LaunchedEffect chạy -> Reset màn hình
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp).shadow(4.dp, RoundedCornerShape(28.dp)),
                             colors = ButtonDefaults.buttonColors(

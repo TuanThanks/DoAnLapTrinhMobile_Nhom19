@@ -40,9 +40,8 @@ fun CourseListScreen(
     navController: NavController,
     viewModel: LearnViewModel
 ) {
-    val context= LocalContext.current
+    val context = LocalContext.current
     val courses by viewModel.courses.collectAsState()
-    val localStorage = remember { LocalStorage(context) }
     LaunchedEffect(Unit) {
         viewModel.loadCourses()
     }
@@ -93,9 +92,9 @@ fun CourseListScreen(
                         course = course,
                         isFirst = index == 0,
                         onClick = {
-                            // 1. LƯU LẠI ID KHÓA HỌC
-                            localStorage.saveLastCourseId(course.id)
-
+                            // 1. LƯU LẠI ID KHÓA HỌC (Đã sửa lỗi gọi hàm)
+                            LocalStorage.saveLastCourseId(context, course.id)
+                            
                             // 2. Chuyển màn hình
                             navController.navigate("${ScreenRoutes.LESSON_LIST.substringBefore("/{")}/${course.id}")
                         }

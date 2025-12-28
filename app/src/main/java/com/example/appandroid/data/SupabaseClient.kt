@@ -16,12 +16,9 @@ object SupabaseClient {
         supabaseUrl = SUPABASE_URL,
         supabaseKey = SUPABASE_KEY
     ) {
-        // --- 2. CẤU HÌNH AUTH CHI TIẾT (SỬA ĐOẠN NÀY) ---
         install(Auth) {
-            // Sử dụng chuẩn PKCE (Chuẩn mới nhất, bảo mật hơn và ít lỗi session hơn)
             flowType = FlowType.PKCE
 
-            // Hai dòng này BẮT BUỘC phải khớp với AndroidManifest.xml
             scheme = "com.example.appandroid"
             host = "reset-callback"
         }

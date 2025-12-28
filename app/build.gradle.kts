@@ -44,9 +44,11 @@ android {
 }
 
 dependencies {
+    implementation("androidx.work:work-runtime-ktx:2.9.0") // Hoặc bản mới nhất
     implementation(platform("io.github.jan-tennert.supabase:bom:2.1.0"))
     implementation("io.github.jan-tennert.supabase:gotrue-kt")
     implementation("io.github.jan-tennert.supabase:postgrest-kt")
+    implementation("androidx.core:core-splashscreen:1.0.1")
 
 // ------------------------
 // Ktor

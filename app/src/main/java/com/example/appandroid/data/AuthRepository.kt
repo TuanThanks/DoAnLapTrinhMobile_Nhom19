@@ -69,13 +69,12 @@ class AuthRepository {
     }
     // Quên mật khẩu
 // Sửa lại hàm gửi mail quên mật khẩu
-    suspend fun sendPasswordResetEmail(email: String) {
-        withContext(Dispatchers.IO) {
-            supabase.auth.resetPasswordForEmail(
-                email = email,
-                redirectUrl = "com.example.appandroid://reset-callback" // Thêm dòng này
-            )
-        }
+// Trong AuthRepository
+    suspend fun sendPasswordResetEmail(email: String, redirectUrl: String) {
+        supabase.auth.resetPasswordForEmail(
+            email = email,
+            redirectUrl = redirectUrl // <--- Quan trọng: Gửi kèm link để Supabase biết đường quay về App
+        )
     }
 
     fun getCurrentUserId(): String? {
@@ -102,10 +101,6 @@ class AuthRepository {
     }
     suspend fun updateUserPassword(newPassword: String): Boolean {
         return try {
-            // ❌ XÓA DÒNG NÀY: supabase.auth.refreshCurrentSession()
-            // Vì ta đang dùng session phục hồi (vừa lấy từ link), đừng refresh nó.
-
-            // Chỉ gọi lệnh đổi pass
             supabase.auth.modifyUser {
                 password = newPassword
             }

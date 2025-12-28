@@ -10,11 +10,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.appandroid.screen.AdminScreen
 import com.example.appandroid.screen.CourseListScreen
 import com.example.appandroid.screen.DictionaryScreen
 import com.example.appandroid.screen.FlashcardScreen
 import com.example.appandroid.screen.ForgotPasswordScreen
 import com.example.appandroid.screen.HomeScreen
+import com.example.appandroid.screen.IntroScreen
+import com.example.appandroid.screen.LandingScreen
 import com.example.appandroid.screen.LessonListScreen
 import com.example.appandroid.screen.LoginScreen
 import com.example.appandroid.screen.ProfileScreen
@@ -41,6 +44,9 @@ object ScreenRoutes {
     const val DICTIONARY = "dictionary_screen"
     const val PROFILE = "profile_screen"
     const val RESET_PASSWORD = "reset_password_screen" // Thêm dòng này
+    const val INTRO = "intro_screen" // <--- Thêm cái này
+    const val LANDING = "landing_screen"
+    const val ADMIN = "admin_screen"
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -92,7 +98,8 @@ fun AppNavigation(startDestination: String = ScreenRoutes.SPLASH) {
             LessonListScreen(
                 navController = navController,
                 courseId = courseId,
-                viewModel = learnViewModel
+                viewModel = learnViewModel,
+                authViewModel = authViewModel // <--- Truyền vào đây
             )
         }
 // ...
@@ -128,6 +135,15 @@ fun AppNavigation(startDestination: String = ScreenRoutes.SPLASH) {
                 navController = navController,
                 viewModel = authViewModel
             )
+        }
+        composable("intro_screen") {
+            IntroScreen(navController = navController)
+        }
+        composable(ScreenRoutes.LANDING) {
+            LandingScreen(navController = navController, authViewModel = authViewModel)
+        }
+        composable(ScreenRoutes.ADMIN) {
+            AdminScreen(navController = navController)
         }
     }
 }

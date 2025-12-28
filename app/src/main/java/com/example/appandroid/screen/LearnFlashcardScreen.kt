@@ -39,8 +39,10 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.appandroid.model.Vocabulary
+import com.example.appandroid.screen.components.MochiYellow
 import com.example.appandroid.utils.SoundManager
 import com.example.appandroid.viewmodel.LearnViewModel
+import com.example.appandroid.utils.ReminderScheduler
 import nl.dionsegijn.konfetti.compose.KonfettiView
 import nl.dionsegijn.konfetti.core.Party
 import nl.dionsegijn.konfetti.core.emitter.Emitter
@@ -166,6 +168,13 @@ fun FlashcardScreen(
                 }
             }
         } else if (currentIndex >= vocabList.size) {
+            // 1. Gọi lệnh lên lịch nhắc nhở (Reset đồng hồ đếm ngược 24h)
+            LaunchedEffect(Unit) {
+                // Chỉ reset lịch nếu người dùng ĐANG BẬT tính năng này
+                if (com.example.appandroid.utils.LocalStorage.isReminderEnabled(context)) {
+                    com.example.appandroid.utils.ReminderScheduler.scheduleNextReminder(context)
+                }
+            }
             FinishScreen(
                 onBack = { navController.popBackStack() },
                 soundManager = soundManager

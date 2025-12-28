@@ -5,7 +5,6 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,7 +25,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -40,14 +38,11 @@ import com.example.appandroid.screen.components.MochiBottomBar
 import com.example.appandroid.viewmodel.LearnViewModel
 
 // --- BẢNG MÀU CHUẨN ---
-val MochiYellow = Color(0xFFFFD600)
-val MochiRed = Color(0xFFFF6B6B)
-val MochiOrange = Color(0xFFFFB74D)
-val MochiBlueLight = Color(0xFF4FC3F7)
+private val MochiBlueLight = Color(0xFF4FC3F7)
 val MochiBlue = Color(0xFF2196F3)
-val MochiNavy = Color(0xFF1A237E)
-val MochiGreen = Color(0xFF4CAF50)
-val BackgroundColor = Color(0xFFF7F9FC) // Màu nền xám xanh nhạt hiện đại hơn
+private val MochiNavy = Color(0xFF1A237E)
+
+private val BackgroundColor = Color(0xFFF7F9FC)
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -57,7 +52,6 @@ fun HomeScreen(
 ) {
     val stats by viewModel.stats.collectAsState()
 
-    // Animation trigger: Khi màn hình load xong, biến này thành true để kích hoạt animation
     var startAnimation by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         viewModel.loadUserStats()
@@ -72,12 +66,11 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 20.dp) // Bỏ vertical padding ở đây để scroll đẹp hơn
-                .verticalScroll(rememberScrollState()), // <--- THÊM DÒNG NÀY: Cho phép cuộn dọc
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
 
-            // Thêm Spacer đầu để đẩy nội dung xuống một chút (thay cho padding vertical cũ)
             Spacer(modifier = Modifier.height(16.dp))
 
             // (1) Header
@@ -97,7 +90,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // (4) Review CTA (Giờ sẽ hiện ra khi bạn vuốt xuống)
+            // (4) Review CTA
             ReviewCTASection(
                 wordsToReview = stats.reviewCount,
                 onClick = {
@@ -107,13 +100,11 @@ fun HomeScreen(
                 }
             )
 
-            // Thêm khoảng trống cuối cùng để nút không bị sát đáy quá
             Spacer(modifier = Modifier.height(30.dp))
         }
     }
 }
 
-// --- COMPONENT: HEADER ---
 @Composable
 fun HeaderSection(onAvatarClick: () -> Unit) {
     Row(
@@ -124,7 +115,7 @@ fun HeaderSection(onAvatarClick: () -> Unit) {
         Column {
             Text(
                 text = "FlashEnglish",
-                fontSize = 26.sp, // To hơn chút
+                fontSize = 26.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = Color(0xFFFF8F00)
             )
@@ -136,18 +127,17 @@ fun HeaderSection(onAvatarClick: () -> Unit) {
             )
         }
 
-        // Avatar với hiệu ứng viền và bóng
         Box(
             modifier = Modifier
                 .size(52.dp)
-                .bounceClick(onClick = onAvatarClick) // Hiệu ứng nhấn
+                .bounceClick(onClick = onAvatarClick)
                 .shadow(6.dp, CircleShape)
                 .background(Color.White, CircleShape)
                 .border(2.dp, Color.White, CircleShape)
-                .padding(2.dp) // Padding để ảnh không sát viền
+                .padding(2.dp)
         ) {
             Image(
-                painter = painterResource(R.drawable.ic_avatar), // Thay icon android bằng ic_avatar
+                painter = painterResource(R.drawable.ic_avatar),
                 contentDescription = "Avatar",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -158,13 +148,12 @@ fun HeaderSection(onAvatarClick: () -> Unit) {
     }
 }
 
-// --- COMPONENT: STATS CARD ---
 @Composable
 fun StatsCard(totalWords: Int) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp), // Đổ bóng nổi
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -174,7 +163,6 @@ fun StatsCard(totalWords: Int) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            // Icon Background tròn
             Box(
                 modifier = Modifier
                     .size(40.dp)
@@ -203,13 +191,10 @@ fun StatsCard(totalWords: Int) {
     }
 }
 
-// --- COMPONENT: SRS GRAPH (ANIMATED) ---
 @Composable
 fun SRSGraphSection(stats: UserProgressStats, startAnimation: Boolean) {
     val levels = listOf(stats.level1Count, stats.level2Count, stats.level3Count, stats.level4Count, stats.level5Count)
     val maxVal = levels.maxOrNull()?.takeIf { it > 0 } ?: 1
-
-    // Màu gradient cho từng cột
     val barColors = listOf(MochiRed, MochiOrange, MochiBlueLight, MochiBlue, MochiNavy)
 
     Card(
@@ -218,7 +203,7 @@ fun SRSGraphSection(stats: UserProgressStats, startAnimation: Boolean) {
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .height(280.dp) // Cao hơn chút để thoáng
+            .height(280.dp)
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -241,15 +226,13 @@ fun SRSGraphSection(stats: UserProgressStats, startAnimation: Boolean) {
                     val heightRatio = count.toFloat() / maxVal.toFloat()
                     val displayRatio = if (count > 0 && heightRatio < 0.12f) 0.12f else heightRatio
 
-                    // Animation cho chiều cao cột
                     val animatedHeight by animateFloatAsState(
-                        targetValue = if (startAnimation) displayRatio else 0f, // Từ 0 -> cao thật
+                        targetValue = if (startAnimation) displayRatio else 0f,
                         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
                         label = "barHeight"
                     )
 
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        // Số lượng (Hiện khi animation xong hoặc mờ dần)
                         if (startAnimation) {
                             Text(
                                 text = "$count",
@@ -261,11 +244,10 @@ fun SRSGraphSection(stats: UserProgressStats, startAnimation: Boolean) {
 
                         Spacer(modifier = Modifier.height(4.dp))
 
-                        // Cột màu (Dùng Gradient)
                         Box(
                             modifier = Modifier
-                                .width(36.dp) // Cột to hơn chút
-                                .fillMaxHeight(0.85f * animatedHeight) // Nhân với biến animation
+                                .width(36.dp)
+                                .fillMaxHeight(0.85f * animatedHeight)
                                 .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
                                 .background(
                                     brush = Brush.verticalGradient(
@@ -284,11 +266,10 @@ fun SRSGraphSection(stats: UserProgressStats, startAnimation: Boolean) {
     }
 }
 
-// --- COMPONENT: REVIEW BUTTON (BOUNCY) ---
 @Composable
 fun ReviewCTASection(wordsToReview: Int, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(){
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Chuẩn bị ôn tập: ",
                 fontSize = 16.sp,
@@ -303,10 +284,9 @@ fun ReviewCTASection(wordsToReview: Int, onClick: () -> Unit) {
         }
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Nút tùy chỉnh với hiệu ứng nhấn
         Box(
             modifier = Modifier
-                .bounceClick(onClick = onClick) // Hiệu ứng nhún
+                .bounceClick(onClick = onClick)
                 .fillMaxWidth()
                 .height(50.dp)
                 .shadow(8.dp, RoundedCornerShape(30.dp))
@@ -332,14 +312,11 @@ fun ReviewCTASection(wordsToReview: Int, onClick: () -> Unit) {
     }
 }
 
-// --- MODIFIER: BOUNCY CLICK EFFECT ---
-// Hàm mở rộng giúp tạo hiệu ứng nhấn "nhún" cho bất kỳ View nào
 @Composable
 fun Modifier.bounceClick(onClick: () -> Unit): Modifier {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
-    // Animation scale: Khi nhấn -> thu nhỏ còn 95%, thả ra -> về 100%
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.95f else 1f,
         label = "pressScale"
@@ -349,8 +326,7 @@ fun Modifier.bounceClick(onClick: () -> Unit): Modifier {
         .scale(scale)
         .clickable(
             interactionSource = interactionSource,
-            indication = null, // Tắt hiệu ứng sóng nước mặc định
+            indication = null,
             onClick = onClick
         )
 }
-

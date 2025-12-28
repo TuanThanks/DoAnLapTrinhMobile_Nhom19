@@ -64,9 +64,6 @@ class LearnRepository {
                     filter {
                         eq("course_id", courseId)
                     }
-                    // --- SỬA DÒNG NÀY ---
-                    // Cũ: order(column = "id") -> Sai vì thiếu chiều sắp xếp
-                    // Mới: Thêm Order.ASCENDING (Tăng dần)
                     order("id", Order.ASCENDING)
                 }
                 .decodeList<Lesson>()
