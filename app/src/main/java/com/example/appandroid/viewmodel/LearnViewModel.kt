@@ -3,7 +3,6 @@ package com.example.appandroid.viewmodel
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.compose.ui.unit.plus
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.appandroid.data.AuthRepository
@@ -14,16 +13,20 @@ import com.example.appandroid.model.Lesson
 import com.example.appandroid.model.UserProgressRequest
 import com.example.appandroid.model.UserProgressStats
 import com.example.appandroid.model.Vocabulary
+import com.example.appandroid.utils.LearningStep
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.datetime.Clock
-import kotlinx.datetime.DateTimeUnit
-import kotlinx.datetime.plus
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import kotlin.random.Random
 
+enum class QuizType {
+    MULTIPLE_CHOICE_MEANING, // Chọn nghĩa tiếng Việt đúng
+    FILL_IN_BLANK,           // Điền từ còn thiếu
+    // Bạn có thể mở rộng thêm: LISTENING, TYPING...
+}
 class LearnViewModel : ViewModel() {
     private val authRepo = AuthRepository()
     private val repository = LearnRepository()
@@ -43,11 +46,131 @@ class LearnViewModel : ViewModel() {
     // Trạng thái loading
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
+    private val _currentStep = MutableStateFlow(LearningStep.FLASHCARD)
+    val currentStep = _currentStep.asStateFlow()
+    private val _reviewQueue = mutableListOf<Vocabulary>()
 
-    // --- CÁC HÀM GỌI DỮ LIỆU ---
+    // Loại câu hỏi hiện tại cho màn hình 3
+    private val _currentQuizType = MutableStateFlow(QuizType.MULTIPLE_CHOICE_MEANING)
+    val currentQuizType = _currentQuizType.asStateFlow()
 
+    // Danh sách đáp án cho câu trắc nghiệm (1 đúng + 3 sai)
+    private val _quizOptions = MutableStateFlow<List<String>>(emptyList())
+    val quizOptions = _quizOptions.asStateFlow()
+    private val _currentLessonIndex = MutableStateFlow(0)
+    val currentLessonIndex: StateFlow<Int> = _currentLessonIndex.asStateFlow()
+    private val _currentQuestion = MutableStateFlow<ReviewQuestion?>(null)
+    val currentQuestion: StateFlow<ReviewQuestion?> = _currentQuestion
+    private val _stats = MutableStateFlow(UserProgressStats())
+    val stats: StateFlow<UserProgressStats> = _stats
+    private val _reviewList = MutableStateFlow<List<Vocabulary>>(emptyList())
+    val reviewList: StateFlow<List<Vocabulary>> = _reviewList
 // ... Trong LearnViewModel
+// Hàm tạo câu hỏi mới từ list review
+// ... import giữ nguyên
 
+    // 2. Hàm Tạo Câu Hỏi Đa Dạng (Random 11 loại)
+    fun generateNextQuestion() {
+        val list = reviewList.value
+        if (list.isEmpty()) {
+            _currentQuestion.value = null
+            return
+        }
+
+        val targetVocab = list.first()
+        val otherVocabs = list.filter { it.id != targetVocab.id }
+
+        // Kiểm tra dữ liệu có đủ để tạo câu hỏi khó không
+        val hasSentence = !targetVocab.exampleSentence.isNullOrBlank()
+        val isPhrase = targetVocab.word.contains(" ") // Check cụm từ
+
+        // Lọc ra các loại câu hỏi khả thi cho từ này
+        val feasibleTypes = mutableListOf<QuestionType>()
+
+        // Nhóm Trắc nghiệm (Cần ít nhất 3 từ khác để làm đáp án nhiễu)
+        if (otherVocabs.size >= 3) {
+            feasibleTypes.add(QuestionType.MC_MEANING_TO_WORD)
+            feasibleTypes.add(QuestionType.MC_WORD_TO_MEANING)
+            feasibleTypes.add(QuestionType.LISTENING_CHOICE)
+            if (hasSentence) feasibleTypes.add(QuestionType.MC_SENTENCE_TO_WORD)
+        }
+
+        // Nhóm Gõ phím / Điền từ (Luôn khả thi)
+        feasibleTypes.add(QuestionType.TYPING_MEANING)
+        feasibleTypes.add(QuestionType.LISTENING_TYPING)
+
+        if (hasSentence) {
+            feasibleTypes.add(QuestionType.FILL_BLANK_HINT)
+            feasibleTypes.add(QuestionType.FILL_BLANK_NO_HINT)
+            feasibleTypes.add(QuestionType.TYPING_SENTENCE)
+            feasibleTypes.add(QuestionType.LISTENING_SENTENCE)
+        }
+        if (isPhrase) feasibleTypes.add(QuestionType.TYPING_COLLOCATION)
+
+        // Random chọn 1 loại
+        val type = feasibleTypes.randomOrNull() ?: QuestionType.TYPING_MEANING
+
+        // Tạo đáp án nhiễu (cho trắc nghiệm)
+        val options = if (type.name.startsWith("MC_") || type == QuestionType.LISTENING_CHOICE) {
+            val isShowWordAnswer = (type == QuestionType.MC_MEANING_TO_WORD || type == QuestionType.MC_SENTENCE_TO_WORD || type == QuestionType.LISTENING_CHOICE)
+
+            val distractors = otherVocabs.shuffled().take(3).map {
+                if (isShowWordAnswer) it.word else it.meaning
+            }
+            val correctParams = if (isShowWordAnswer) targetVocab.word else targetVocab.meaning
+            (distractors + correctParams).shuffled()
+        } else emptyList()
+
+        // Đáp án đúng để so khớp
+        val correctString = when(type) {
+            QuestionType.MC_WORD_TO_MEANING -> targetVocab.meaning
+            else -> targetVocab.word // Các dạng còn lại đều yêu cầu nhập/chọn từ tiếng Anh
+        }
+
+        _currentQuestion.value = ReviewQuestion(targetVocab, type, options, correctString)
+    }
+
+    // Hàm xử lý khi người dùng trả lời xong (giống hàm cũ của bạn nhưng gọi generateNextQuestion)
+    @RequiresApi(Build.VERSION_CODES.O)
+    fun processResult(vocabId: Long, isCorrect: Boolean) {
+        val currentList = _reviewList.value.toMutableList()
+        if (currentList.isEmpty()) return
+
+        val currentVocab = currentList.first() // Từ đang học
+
+        if (isCorrect) {
+            // --- ĐÚNG ---
+            // Tăng level (Max 5)
+            val nextLevel = if (currentVocab.currentLevel < 5) currentVocab.currentLevel + 1 else 5
+
+            // Lưu DB và xóa khỏi hàng đợi
+            submitReviewResult(vocabId, nextLevel)
+            currentList.removeAt(0)
+
+        } else {
+            // --- SAI / QUÊN ---
+
+            // Logic: Giảm 1 Level (Min 1)
+            val newLevel = if (currentVocab.currentLevel > 1) currentVocab.currentLevel - 1 else 1
+
+            // Cập nhật ngay vào object hiện tại để lần sau gặp lại nó biết nó đang level thấp
+            currentVocab.currentLevel = newLevel
+
+            // Lưu xuống DB ngay lập tức (để SRS ghi nhận việc bị tụt hạng)
+            submitReviewResult(vocabId, newLevel)
+
+            // Logic Hàng Đợi: Đẩy lùi ra sau 5 vị trí
+            currentList.removeAt(0)
+            // Nếu list còn ít hơn 5 từ thì nhét xuống cuối, nếu nhiều hơn thì nhét vào vị trí số 5
+            val insertIndex = minOf(5, currentList.size)
+            currentList.add(insertIndex, currentVocab)
+
+            Log.d("ReviewLogic", "Sai từ '${currentVocab.word}'. Giảm về Level $newLevel. Lặp lại sau $insertIndex từ.")
+        }
+
+        _reviewList.value = currentList
+        generateNextQuestion()
+    }
     fun loadCourses() {
         viewModelScope.launch {
             try {
@@ -101,10 +224,33 @@ class LearnViewModel : ViewModel() {
             _isLoading.value = false
         }
     }
+    fun getTotalProgressSteps(): Int {
+        return _vocabList.value.size * 3
+    }
+    fun getCurrentProgressStep(): Int {
+        val wordIndex = _currentLessonIndex.value
 
+        // Tính điểm dựa trên bước nhỏ đang đứng
+        val stepScore = when (_currentStep.value) {
+            LearningStep.FLASHCARD -> 0 // Vừa vào Flashcard tính là bắt đầu từ đó
+            LearningStep.DICTATION -> 1 // Xong Flashcard -> được 1 điểm
+            LearningStep.QUIZ -> 2      // Xong Dictation -> được 2 điểm
+            else -> 3                   // Xong hết -> 3 điểm
+        }
+
+        // Công thức: (Số từ đã qua * 3) + Điểm của từ hiện tại
+        // Ví dụ: Đang học từ thứ 2 (index=1), ở màn hình Quiz (2 điểm)
+        // -> (1 * 3) + 2 = 5. Tiến độ là 5/15.
+        // Khi bấm "Đã biết" ở từ 1 -> index nhảy lên 1 -> (1*3) + 0 = 3. Tiến độ nhảy từ 0 lên 3.
+        return (wordIndex * 3) + stepScore + 1
+    }
     fun loadVocabularies(lessonId: Long) {
         viewModelScope.launch {
             _isLoading.value = true
+            _currentLessonIndex.value = 0          // Reset biến đếm về 0 (Bài đầu tiên)
+            _currentStep.value = LearningStep.FLASHCARD // Reset về bước 1 (Màn hình Flashcard)
+            _reviewQueue.clear()                   // Xóa hàng chờ ôn tập cũ (nếu có)
+            // ----------------------
             try {
                 _vocabList.value = repository.getVocabularies(lessonId)
             } catch (e: Exception) {
@@ -114,110 +260,31 @@ class LearnViewModel : ViewModel() {
             }
         }
     }
-    @RequiresApi(Build.VERSION_CODES.O)
-    fun markAsLearned(vocabId: Long, isKnown: Boolean) {
-        viewModelScope.launch {
-            val userId = authRepo.getCurrentUserId() ?: return@launch
-
-            // Logic Mochi:
-            // - Nếu bấm "Tiếp tục" (Mới học) -> Level 1 -> Ôn lại sau 1 ngày (hoặc 1 phút để test)
-            // - Nếu bấm "Đã biết" -> Level 5 (hoặc 4) -> Ôn lại sau 1 tháng
-
-            val level = if (isKnown) 5 else 1
-            // Tính thời gian ôn tập tiếp theo (Next Review)
-            val now = Instant.now() // Lấy giờ hiện tại (UTC)
-
-            val nextReview = if (isKnown) {
-                // Đã biết -> Cộng 30 ngày
-                now.plus(30, ChronoUnit.DAYS)
-            } else {
-                // Mới học -> Cộng 1 ngày (hoặc 1 phút để test)
-                now.plus(1, ChronoUnit.DAYS)
-            }
-
-            // Chuyển sang String chuẩn ISO-8601 để gửi lên Supabase
-            val request = UserProgressRequest(
-                userId = userId,
-                vocabId = vocabId,
-                memoryLevel = level,
-                isLearned = true,
-                nextReviewAt = nextReview.toString() // VD: "2023-10-25T10:00:00Z"
-            )
-
-            try {
-                repository.saveWordProgress(request)
-                repository.updateStreak(userId)
-                // Log để kiểm tra
-                println("Đã lưu tiến độ cho từ $vocabId: Level $level")
-                println("Đã học xong từ $vocabId, đang update streak...")
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            repository.updateStreak(userId)
-        }
-    }
     // Danh sách từ cần ôn tập
-    private val _reviewList = MutableStateFlow<List<Vocabulary>>(emptyList())
-    val reviewList: StateFlow<List<Vocabulary>> = _reviewList
 
-    @RequiresApi(Build.VERSION_CODES.O)
-    fun loadReviewWords() {
-        viewModelScope.launch {
-            val userId = authRepo.getCurrentUserId() ?: return@launch
-            _isLoading.value = true
-            try {
-                // Gọi Repository lấy danh sách
-                _reviewList.value = repository.getReviewList(userId)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                _isLoading.value = false
-            }
-        }
-    }
     // Hàm xử lý Ôn tập (Review)
     @RequiresApi(Build.VERSION_CODES.O)
-    fun submitReviewResult(vocabId: Long, currentLevel: Int, isRemembered: Boolean) {
+    fun submitReviewResult(vocabId: Long, newLevel: Int) {
         viewModelScope.launch {
             val userId = authRepo.getCurrentUserId() ?: return@launch
-
-            // LOGIC QUAN TRỌNG NHẤT CỦA APP MOCHI
-            val newLevel = if (isRemembered) {
-                // Nếu nhớ: Tăng 1 cấp (Max là 5)
-                if (currentLevel < 5) currentLevel + 1 else 5
-            } else {
-                // Nếu quên: Về lại mức 1
-                1
-            }
-
-            // Tính thời gian ôn tiếp theo dựa trên Level mới
             val now = Instant.now()
+
+            // Công thức Spaced Repetition của bạn
             val nextReview = when (newLevel) {
-                1 -> now.plus(1, ChronoUnit.DAYS)   // Level 1: 1 ngày
-                2 -> now.plus(3, ChronoUnit.DAYS)   // Level 2: 3 ngày
-                3 -> now.plus(7, ChronoUnit.DAYS)   // Level 3: 7 ngày
-                4 -> now.plus(14, ChronoUnit.DAYS)  // Level 4: 2 tuần
-                5 -> now.plus(30, ChronoUnit.DAYS)  // Level 5: 1 tháng
+                1 -> now.plus(1, ChronoUnit.MINUTES) // Level 1 học lại ngay
+                2 -> now.plus(3, ChronoUnit.DAYS)
+                3 -> now.plus(7, ChronoUnit.DAYS)
+                4 -> now.plus(14, ChronoUnit.DAYS)
+                5 -> now.plus(30, ChronoUnit.DAYS)
                 else -> now.plus(1, ChronoUnit.DAYS)
             }
 
-            // Gửi lên Server
             val request = UserProgressRequest(
-                userId = userId,
-                vocabId = vocabId,
-                memoryLevel = newLevel,
-                isLearned = true,
+                userId = userId, vocabId = vocabId,
+                memoryLevel = newLevel, isLearned = true,
                 nextReviewAt = nextReview.toString()
             )
-
-            try {
-                repository.saveWordProgress(request)
-                repository.updateStreak(userId)
-                // Sau khi lưu xong, xóa từ này khỏi danh sách ôn tập hiện tại trên UI
-                _reviewList.value = _reviewList.value.filter { it.id != vocabId }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            repository.saveWordProgress(request)
         }
     }
     private val _searchResult = MutableStateFlow<List<DictionaryEntry>>(emptyList())
@@ -264,8 +331,7 @@ class LearnViewModel : ViewModel() {
         }
     }
     // Biến lưu thống kê (Để vẽ biểu đồ)
-    private val _stats = MutableStateFlow(UserProgressStats())
-    val stats: StateFlow<UserProgressStats> = _stats
+
 
     // Hàm tính toán thống kê
     @RequiresApi(Build.VERSION_CODES.O)
@@ -313,5 +379,126 @@ class LearnViewModel : ViewModel() {
             _streak.value = profile?.streakCount ?: 0
         }
     }
+    // Hàm chuyển sang bước tiếp theo
+    fun moveToNextStep() {
+        when (_currentStep.value) {
+            LearningStep.FLASHCARD -> {
+                _currentStep.value = LearningStep.DICTATION
+            }
+            LearningStep.DICTATION -> {
+                // Trước khi sang Quiz, hãy chuẩn bị dữ liệu cho Quiz
+                prepareQuiz()
+                _currentStep.value = LearningStep.QUIZ
+            }
+            LearningStep.QUIZ -> {
+                // Xong từ hiện tại -> Chuyển từ tiếp theo
+                nextLesson()
+            }
+            else -> {}
+        }
+    }
+    private fun prepareQuiz() {
+        val currentVocab = _vocabList.value.getOrNull(_currentLessonIndex.value) ?: return
 
+        // Random loại câu hỏi (50% trắc nghiệm, 50% điền từ)
+        // Hoặc bạn có thể fix cứng logic: Sai Dictation -> Fill Blank, Đúng -> Multiple Choice
+        val isRandomChoice = Random.nextBoolean()
+
+        if (isRandomChoice) {
+            _currentQuizType.value = QuizType.MULTIPLE_CHOICE_MEANING
+            generateMultipleChoiceOptions(currentVocab)
+        } else {
+            _currentQuizType.value = QuizType.FILL_IN_BLANK
+        }
+    }
+    private fun generateMultipleChoiceOptions(correctVocab: Vocabulary) {
+        val allMeanings = _vocabList.value.map { it.meaning }.toMutableList()
+        allMeanings.remove(correctVocab.meaning) // Bỏ đáp án đúng ra khỏi list sai
+
+        // Lấy 3 đáp án sai ngẫu nhiên
+        val wrongOptions = allMeanings.shuffled().take(3)
+
+        // Trộn đáp án đúng vào và shuffle lần nữa
+        val options = (wrongOptions + correctVocab.meaning).shuffled()
+        _quizOptions.value = options
+    }
+
+    // Hàm chuyển từ mới (Logic cũ của bạn nhưng cập nhật thêm reset step)
+    fun nextLesson() {
+        val currentList = _vocabList.value
+        val currentIndex = _currentLessonIndex.value
+
+        if (currentIndex < currentList.size - 1) {
+            // Vẫn còn từ mới -> Tăng Index -> Reset về Flashcard
+            _currentLessonIndex.value += 1
+            _currentStep.value = LearningStep.FLASHCARD
+        } else {
+            // Hết từ mới -> Kiểm tra hàng chờ Review (Từ làm sai)
+            if (_reviewQueue.isNotEmpty()) {
+                // Lấy từ đầu tiên trong hàng chờ ra học lại
+                val nextReviewVocab = _reviewQueue.removeAt(0)
+
+                // Mẹo: Thêm tạm vào list hiển thị để học tiếp
+                val newList = currentList.toMutableList()
+                newList.add(nextReviewVocab)
+                _vocabList.value = newList
+
+                _currentLessonIndex.value += 1
+                _currentStep.value = LearningStep.FLASHCARD
+            } else {
+                // --- HOÀN THÀNH BÀI HỌC ---
+                // Chỉ khi hết sạch sành sanh (cả từ mới lẫn từ ôn lại) mới vào đây
+
+                // 1. Trigger màn hình Finish
+                _currentLessonIndex.value += 1
+
+                // 2. Đổi màu xanh cho Lesson (Chỉ làm ở đây)
+                // Lưu ý: Bạn cần lấy lessonId từ đâu đó, hoặc truyền vào hàm này
+                // Ở đây mình lấy ID của từ cuối cùng để truy ngược ra Lesson (hoặc bạn lưu currentLessonId trong ViewModel)
+                val lessonId = currentList.firstOrNull()?.lessonId ?: 0L
+                if (lessonId != 0L) {
+                    markLessonAsCompleted(lessonId)
+                }
+            }
+        }
+    }
+    // Hàm đổi màu xanh Lesson (Chỉ cập nhật UI List bên ngoài)
+// Sửa lại hàm này
+    fun markLessonAsCompleted(lessonId: Long) {
+        viewModelScope.launch {
+            // 1. Cập nhật UI ngay lập tức cho mượt (Optimistic Update)
+            val updatedLessons = _lessons.value.map { lesson ->
+                if (lesson.id == lessonId) lesson.copy(isLearned = true) else lesson
+            }
+            _lessons.value = updatedLessons
+
+            // 2. GỌI API LƯU LÊN SUPABASE
+            val userId = authRepo.getCurrentUserId()
+            if (userId != null) {
+                try {
+                    // Gọi repository lưu vào bảng user_lessons
+                    repository.completeLesson(userId, lessonId)
+                    Log.d("LearnViewModel", "Saved lesson completion to DB")
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
+    // Hàm "Tôi đã biết từ này" -> Bỏ qua Dictation/Quiz -> Sang từ mới luôn
+    fun onKnowWord() {
+        // Logic đánh dấu đã thuộc (nếu cần)
+        // ...
+        nextLesson()
+    }
+
+    // Hàm đánh dấu làm sai (để ôn lại sau)
+    fun markAsWrong(vocab: Vocabulary) {
+        // Nếu từ này chưa có trong hàng đợi thì thêm vào
+        if (!_reviewQueue.any { it.id == vocab.id }) {
+            _reviewQueue.add(vocab)
+            // Có thể thêm logic: Toast báo "Từ này sẽ được ôn lại vào cuối giờ"
+        }
+    }
 }

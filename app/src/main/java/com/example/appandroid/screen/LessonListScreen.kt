@@ -36,6 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -68,10 +71,20 @@ fun LessonListScreen(
     // 2. LẤY ROLE CỦA USER
     val userRole by authViewModel.userRole.collectAsState()
 
-    LaunchedEffect(courseId) {
-        viewModel.loadLessons(courseId)
-    }
 
+    // --- SỬA ĐOẠN NÀY (THAY CHO LAUNCHEDEFFECT CŨ) ---
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Lắng nghe vòng đời: Mỗi khi màn hình hiện lên (ON_RESUME) -> Tải lại dữ liệu
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.loadLessons(courseId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     Scaffold(
         topBar = {
             // HEADER (Giữ nguyên)

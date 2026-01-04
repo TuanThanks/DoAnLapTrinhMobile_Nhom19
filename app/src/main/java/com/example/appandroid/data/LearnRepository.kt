@@ -12,6 +12,7 @@ import com.example.appandroid.model.UserProgressRequest
 import com.example.appandroid.model.Vocabulary
 import com.example.appandroid.model.VocabularyRequest
 import io.github.jan.supabase.gotrue.auth
+import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order // <--- 1. THÊM IMPORT NÀY
@@ -96,32 +97,53 @@ class LearnRepository {
         }
     }
     // Lấy danh sách từ cần ôn tập (Review)
+// ... imports giữ nguyên
+
     @RequiresApi(Build.VERSION_CODES.O)
     suspend fun getReviewList(userId: String): List<Vocabulary> {
         return withContext(Dispatchers.IO) {
             val now = Instant.now().toString()
 
-            // Bước 1: Lấy danh sách ID các từ cần ôn từ bảng user_progress
-            // Logic: Lọc user_id VÀ next_review_at <= hiện tại
+            // BƯỚC 1: Lấy TOÀN BỘ danh sách tiến độ đến hạn (ĐÃ BỎ LIMIT)
             val progressList = supabase.postgrest["user_progress"]
                 .select {
                     filter {
                         eq("user_id", userId)
-                        lte("next_review_at", now) // lte = Less Than or Equal (Nhỏ hơn hoặc bằng)
+                        lte("next_review_at", now) // Nhỏ hơn hoặc bằng hiện tại
                     }
+                    order("next_review_at", Order.ASCENDING)
                 }.decodeList<UserProgressRequest>()
 
             if (progressList.isEmpty()) return@withContext emptyList()
 
-            // Bước 2: Lấy chi tiết từ vựng dựa trên list ID vừa tìm được
+            // BƯỚC 2: Lấy chi tiết từ vựng (Dùng kỹ thuật Chunking an toàn)
             val vocabIds = progressList.map { it.vocabId }
+            val allVocabularies = mutableListOf<Vocabulary>()
 
-            supabase.postgrest["vocabularies"]
-                .select {
-                    filter {
-                        isIn("id", vocabIds) // Lọc những từ có ID nằm trong danh sách cần ôn
-                    }
-                }.decodeList<Vocabulary>()
+            // Chia danh sách ID thành các nhóm nhỏ, mỗi nhóm 50 ID
+            // Ví dụ: 258 từ sẽ chia thành 6 lần gọi (50, 50, 50, 50, 50, 8)
+            // Cách này đảm bảo không bao giờ bị lỗi quá tải đường truyền
+            vocabIds.chunked(50).forEach { batchIds ->
+                val batchResult = supabase.postgrest["vocabularies"]
+                    .select {
+                        filter {
+                            isIn("id", batchIds)
+                        }
+                    }.decodeList<Vocabulary>()
+
+                allVocabularies.addAll(batchResult)
+            }
+
+            // BƯỚC 3: Map Level từ progress sang vocabulary
+            allVocabularies.forEach { vocab ->
+                val matchingProgress = progressList.find { it.vocabId == vocab.id }
+                if (matchingProgress != null) {
+                    vocab.currentLevel = matchingProgress.memoryLevel
+                }
+            }
+
+            // Trả về toàn bộ danh sách (258 từ...)
+            allVocabularies
         }
     }
 
@@ -226,40 +248,27 @@ class LearnRepository {
     }
     // ...
     // Hàm lấy danh sách ID của các bài học mà User đã bắt đầu học
+// 2. Cập nhật lại hàm getLearnedLessonIds để lấy từ bảng mới này
     suspend fun getLearnedLessonIds(userId: String): List<Long> {
-        return withContext(Dispatchers.IO) {
-            try {
-                // 1. Lấy danh sách vocab_id từ bảng tiến độ
-                // Dùng class VocabIdOnly để hứng, thay vì UserProgressRequest
-                val userProgress = supabase.postgrest["user_progress"]
-                    .select(columns = Columns.list("vocab_id")) {
-                        filter { eq("user_id", userId) }
-                    }.decodeList<VocabIdOnly>() // <--- ĐÃ SỬA CHỖ NÀY
+        return try {
+            val result = SupabaseClient.client
+                .from("user_lessons")
+                // Chỉ lấy cột lesson_id
+                .select(columns = Columns.list("lesson_id")) {
+                    filter { eq("user_id", userId) }
+                }
+                // SỬA Ở ĐÂY: Dùng class nhỏ LessonIdResult thay vì UserLessonProgress
+                .decodeList<LessonIdResult>()
 
-                if (userProgress.isEmpty()) return@withContext emptyList()
+            // Map ra list Long
+            result.map { it.lesson_id }
 
-                // Map sang list ID
-                val learnedVocabIds = userProgress.map { it.vocabId }
-
-                // 2. Tra ngược về lesson_id từ bảng vocabularies
-                // Dùng class LessonIdOnly (bạn đã tạo ở bước trước)
-                val learnedLessons = supabase.postgrest["vocabularies"]
-                    .select(columns = Columns.list("lesson_id")) {
-                        filter { isIn("id", learnedVocabIds) }
-                    }.decodeList<LessonIdOnly>()
-
-                // Trả về danh sách lesson_id không trùng lặp
-                learnedLessons.map { it.lessonId }.distinct()
-
-            } catch (e: Exception) {
-                e.printStackTrace()
-                // In lỗi ra Logcat để kiểm tra nếu vẫn còn lỗi
-                println("🔥 Lỗi getLearnedLessonIds: ${e.message}")
-                emptyList()
-            }
+        } catch (e: Exception) {
+            // QUAN TRỌNG: In lỗi ra để biết nếu có gì sai
+            e.printStackTrace()
+            emptyList()
         }
     }
-    // Trong LearnRepository.kt
 
 // ... các hàm cũ ...
 
@@ -323,12 +332,34 @@ class LearnRepository {
             }
         }
     }
+    // 1. Hàm lưu bài học đã xong
+// Sửa hàm completeLesson
+    suspend fun completeLesson(userId: String, lessonId: Long) {
+        val progress = UserLessonProgress(
+            user_id = userId,
+            lesson_id = lessonId
+        )
+
+        try {
+            SupabaseClient.client
+                .from("user_lessons")
+                .insert(progress)
+        } catch (e: Exception) {
+            // Duplicate key → bỏ qua
+        }
+    }
+
+
+
 }
+
 @Serializable
-data class LessonIdOnly(
-    @SerialName("lesson_id") val lessonId: Long
+data class UserLessonProgress(
+    val user_id: String,
+    val lesson_id: Long,
+    val is_completed: Boolean = true
 )
-@Serializable
-data class VocabIdOnly(
-    @SerialName("vocab_id") val vocabId: Long
+@kotlinx.serialization.Serializable
+data class LessonIdResult(
+    val lesson_id: Long
 )

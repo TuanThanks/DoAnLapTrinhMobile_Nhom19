@@ -1,42 +1,36 @@
 package com.example.appandroid.screen
 
+
 import android.os.Build
-import android.widget.Toast
+import android.speech.tts.TextToSpeech
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.example.appandroid.screen.component.FeedbackBottomSheet
+import com.example.appandroid.screen.component.MultipleChoiceQuestionView
+import com.example.appandroid.screen.component.TypingQuestionView
 import com.example.appandroid.utils.SoundManager
 import com.example.appandroid.viewmodel.LearnViewModel
-
-// --- KHAI BÁO MÀU (Thêm MochiGreen/Dark nếu file khác chưa có) ---
-val ReviewGray = Color(0xFFE0E0E0)
-val CorrectGreen = Color(0xFF4CAF50)
-val WrongRed = Color(0xFFF44336)
-// Nếu project bạn đã có file UiTheme chứa 2 màu này thì xóa 2 dòng dưới đi
+import com.example.appandroid.viewmodel.QuestionType
+import java.util.Locale
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 
 
 @RequiresApi(Build.VERSION_CODES.O)
@@ -47,53 +41,132 @@ fun ReviewFlashcardScreen(
 ) {
     val context = LocalContext.current
     val soundManager = remember { SoundManager(context) }
-    val focusManager = LocalFocusManager.current
 
-    // --- LOGIC 1: VỪA VÀO MÀN HÌNH LÀ RESET LỊCH NGAY (HOÃN BINH) ---
+    val reviewList by viewModel.reviewList.collectAsState()
+    val currentQuestion by viewModel.currentQuestion.collectAsState()
+
+    // State UI
+    var showFeedback by remember { mutableStateOf(false) }
+    var isUserCorrect by remember { mutableStateOf(false) }
+    var selectedAnswer by remember { mutableStateOf<String?>(null) }
+
+    // State Typing (Lưu chữ người dùng gõ)
+    var userInput by remember { mutableStateOf("") }
+
+    // --- CẤU HÌNH ÂM THANH ---
+    // 1. TextToSpeech (Dự phòng)
+    var tts: TextToSpeech? by remember { mutableStateOf(null) }
+    DisposableEffect(Unit) {
+        val textToSpeech = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.US
+            }
+        }
+        tts = textToSpeech
+        onDispose {
+            textToSpeech.stop()
+            textToSpeech.shutdown()
+        }
+    }
+
+    // 2. MediaPlayer (Phát link DB)
+    val mediaPlayer = remember { MediaPlayer() }
+
+    // --- HÀM PHÁT ÂM THANH (ĐỊNH NGHĨA Ở ĐÂY ĐỂ DÙNG ĐƯỢC BÊN DƯỚI) ---
+    fun playSmartAudio(word: String, audioUrl: String?) {
+        if (!audioUrl.isNullOrBlank()) {
+            try {
+                mediaPlayer.reset()
+                mediaPlayer.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                mediaPlayer.setDataSource(audioUrl)
+                mediaPlayer.prepareAsync()
+                mediaPlayer.setOnPreparedListener {
+                    it.start()
+                    Log.d("Audio", "Playing from URL: $audioUrl")
+                }
+                mediaPlayer.setOnErrorListener { _, _, _ ->
+                    // Lỗi link -> Dùng TTS
+                    tts?.speak(word, TextToSpeech.QUEUE_FLUSH, null, null)
+                    true
+                }
+            } catch (e: Exception) {
+                tts?.speak(word, TextToSpeech.QUEUE_FLUSH, null, null)
+            }
+        } else {
+            // Không có link -> Dùng TTS
+            tts?.speak(word, TextToSpeech.QUEUE_FLUSH, null, null)
+        }
+    }
+
+    // Giải phóng MediaPlayer khi thoát
+    DisposableEffect(Unit) {
+        onDispose { mediaPlayer.release() }
+    }
+
+    // --- LOGIC ---
     LaunchedEffect(Unit) {
+        // Reset nhắc nhở
         val storage = com.example.appandroid.utils.LocalStorage(context)
         if (storage.isReminderEnabled()) {
             com.example.appandroid.utils.ReminderScheduler.scheduleNextReminder(context)
         }
+        // Tạo câu hỏi đầu tiên
+        viewModel.generateNextQuestion()
     }
 
-    // 1. Lấy danh sách review
-    val reviewList by viewModel.reviewList.collectAsState()
-
-    // 2. Luôn lấy từ đầu tiên
-    val currentVocab = reviewList.firstOrNull()
-
-    // State nhập liệu
-    var userInput by remember { mutableStateOf("") }
-    var isChecked by remember { mutableStateOf(false) }
-    var isCorrect by remember { mutableStateOf(false) }
-
-    // 3. Reset form khi từ vựng thay đổi
-    LaunchedEffect(currentVocab) {
+    // Reset ô nhập liệu mỗi khi đổi câu hỏi
+    LaunchedEffect(currentQuestion) {
         userInput = ""
-        isChecked = false
-        isCorrect = false
+        showFeedback = false
+        selectedAnswer = null
     }
 
+    // Xử lý trả lời
+    fun handleAnswer(answer: String) {
+        if (showFeedback) return
+
+        selectedAnswer = answer
+        val correct = currentQuestion?.correctAnswer ?: ""
+
+        isUserCorrect = answer.trim().equals(correct.trim(), ignoreCase = true)
+        showFeedback = true
+
+        if (isUserCorrect) {
+            soundManager.playSuccess()
+            playSmartAudio(currentQuestion?.vocab?.word ?: "", currentQuestion?.vocab?.audioUrl)
+        } else {
+            soundManager.playWrong()
+        }
+    }
+
+    // Next câu hỏi
+    fun onNextQuestion() {
+        val q = currentQuestion ?: return
+        viewModel.processResult(q.vocab.id, isUserCorrect)
+    }
+
+    // --- GIAO DIỆN ---
     Scaffold(containerColor = Color.White) { padding ->
-        if (reviewList.isEmpty()) {
-            // --- LOGIC 2: HỌC XONG THÌ RESET LỊCH (CHỐT HẠ) ---
-            // Dùng luôn biến 'context' ở trên, không cần tạo 'ctx' mới
-            LaunchedEffect(Unit) {
-                val storage = com.example.appandroid.utils.LocalStorage(context)
-                if (storage.isReminderEnabled()) {
-                    com.example.appandroid.utils.ReminderScheduler.scheduleNextReminder(context)
+        if (reviewList.isEmpty() && currentQuestion == null) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("🎉", fontSize = 60.sp)
+                    Text("Bạn đã hoàn thành bài ôn!", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(onClick = { navController.popBackStack() }) { Text("Quay về") }
                 }
             }
+        } else if (currentQuestion != null) {
+            val q = currentQuestion!!
 
-            FinishScreen(onBack = { navController.popBackStack() })
-        } else {
-            currentVocab?.let { vocab ->
+            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(24.dp),
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     // Header
@@ -108,135 +181,105 @@ fun ReviewFlashcardScreen(
                         Text(text = "Còn: ${reviewList.size}", color = Color.Gray, fontWeight = FontWeight.Bold)
                     }
 
-                    Spacer(modifier = Modifier.height(40.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                    // Câu hỏi
-                    Text(text = "Điền từ tiếng Anh", fontSize = 16.sp, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    Text(
-                        text = vocab.meaning,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                        color = Color.Black
-                    )
-
-                    Spacer(modifier = Modifier.height(40.dp))
-
-                    // Ô nhập liệu
-                    val wordLength = vocab.word.length
-
-                    BasicTextField(
-                        value = userInput,
-                        onValueChange = { if (!isChecked) userInput = it },
-                        textStyle = TextStyle(
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Bold,
-                            textAlign = TextAlign.Center,
-                            color = if (isChecked) (if (isCorrect) CorrectGreen else WrongRed) else Color.Black,
-                            letterSpacing = 4.sp
-                        ),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = {
-                            focusManager.clearFocus()
-                            if (userInput.isNotBlank() && !isChecked) {
-                                val result = userInput.trim().equals(vocab.word, ignoreCase = true)
-                                isCorrect = result
-                                isChecked = true
-                                if (result) soundManager.playSuccess() else soundManager.playWrong()
-                            }
-                        }),
-                        cursorBrush = SolidColor(MochiGreen),
-                        decorationBox = { innerTextField ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.dp, Color.LightGray, RoundedCornerShape(12.dp))
-                                    .padding(vertical = 16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (userInput.isEmpty()) {
-                                    Text(
-                                        text = "_ ".repeat(wordLength),
-                                        fontSize = 28.sp,
-                                        color = Color.LightGray,
-                                        letterSpacing = 4.sp
-                                    )
+                    // Hiển thị câu hỏi
+                    when (q.type) {
+                        QuestionType.MC_MEANING_TO_WORD -> {
+                            TitleText("Chọn từ tiếng Anh đúng:")
+                            BigText(q.vocab.meaning, MochiBlue)
+                        }
+                        QuestionType.MC_WORD_TO_MEANING -> {
+                            TitleText("Chọn nghĩa tiếng Việt đúng:")
+                            BigText(q.vocab.word, MochiGreen)
+                        }
+                        QuestionType.MC_SENTENCE_TO_WORD -> {
+                            TitleText("Chọn từ điền vào chỗ trống:")
+                            SentenceText(q.vocab.exampleSentence, q.vocab.word)
+                        }
+                        QuestionType.LISTENING_CHOICE,
+                        QuestionType.LISTENING_TYPING,
+                        QuestionType.LISTENING_SENTENCE -> {
+                            TitleText("Nghe và trả lời:")
+                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                IconButton(
+                                    onClick = { playSmartAudio(q.vocab.word, q.vocab.audioUrl) },
+                                    modifier = Modifier.size(80.dp).background(MochiBlue.copy(0.1f), CircleShape)
+                                ) {
+                                    Icon(Icons.Default.VolumeUp, null, tint = MochiBlue, modifier = Modifier.size(40.dp))
                                 }
-                                innerTextField()
+                            }
+                            LaunchedEffect(q) { playSmartAudio(q.vocab.word, q.vocab.audioUrl) }
+                        }
+                        else -> {
+                            // Typing & Fill blank
+                            val title = if(q.type == QuestionType.TYPING_MEANING) "Gõ từ tiếng Anh:" else "Điền từ còn thiếu:"
+                            TitleText(title)
+                            if (q.type == QuestionType.TYPING_MEANING || q.type == QuestionType.TYPING_COLLOCATION) {
+                                BigText(q.vocab.meaning)
+                            } else {
+                                SentenceText(q.vocab.exampleSentence, q.vocab.word)
                             }
                         }
-                    )
-
-                    if (isChecked && !isCorrect) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Đáp án: ${vocab.word}",
-                            color = CorrectGreen,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
-                        )
                     }
 
                     Spacer(modifier = Modifier.weight(1f))
 
-                    // Footer Buttons
-                    if (!isChecked) {
-                        Button(
-                            onClick = {
-                                if (userInput.isNotBlank()) {
-                                    val result = userInput.trim().equals(vocab.word, ignoreCase = true)
-                                    isCorrect = result
-                                    isChecked = true
-                                    if (result) soundManager.playSuccess() else soundManager.playWrong()
-                                } else {
-                                    Toast.makeText(context, "Hãy nhập từ vựng!", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().height(56.dp).shadow(4.dp, RoundedCornerShape(28.dp)),
-                            colors = ButtonDefaults.buttonColors(containerColor = ReviewGray),
-                            shape = RoundedCornerShape(28.dp)
-                        ) {
-                            Text("Kiểm tra", fontSize = 18.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        TextButton(onClick = {
-                            isCorrect = false
-                            isChecked = true
-                            userInput = vocab.word
-                            soundManager.playWrong()
-                        }) {
-                            Text(
-                                "Mình không thuộc từ này",
-                                fontSize = 16.sp,
-                                color = Color.Gray,
-                                style = TextStyle(textDecoration = TextDecoration.Underline)
-                            )
-                        }
+                    // Khu vực trả lời
+                    if (q.options.isNotEmpty()) {
+                        MultipleChoiceQuestionView(
+                            options = q.options,
+                            correctAnswer = q.correctAnswer,
+                            selectedAnswer = selectedAnswer,
+                            isAnswered = showFeedback,
+                            onAnswerSelected = { handleAnswer(it) }
+                        )
                     } else {
-                        Button(
-                            onClick = {
-                                viewModel.submitReviewResult(
-                                    vocabId = vocab.id,
-                                    currentLevel = 1,
-                                    isRemembered = isCorrect
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth().height(56.dp).shadow(4.dp, RoundedCornerShape(28.dp)),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isCorrect) CorrectGreen else MochiTextDark
-                            ),
-                            shape = RoundedCornerShape(28.dp)
-                        ) {
-                            Text("Tiếp tục", fontSize = 18.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                        }
+                        // SỬA: Dùng TypingQuestionView mới (có truyền userInput)
+                        val hint = if (q.type == QuestionType.FILL_BLANK_HINT) generateHint(q.vocab.word) else null
+
+                        TypingQuestionView(
+                            currentInput = userInput,          // Truyền biến state vào
+                            onInputChange = { userInput = it },// Nhận sự kiện gõ phím
+                            onAnswerSubmit = { handleAnswer(userInput) },
+                            hintText = hint,
+                            isAnswered = showFeedback
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(80.dp))
+                }
+
+                // Bottom Sheet
+                if (showFeedback) {
+                    Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                        FeedbackBottomSheet(
+                            vocab = q.vocab,
+                            isCorrect = isUserCorrect,
+                            onContinue = { onNextQuestion() },
+                            playAudio = { playSmartAudio(q.vocab.word, q.vocab.audioUrl) }
+                        )
                     }
                 }
             }
         }
     }
 }
+
+// Helper Composable
+@Composable fun TitleText(text: String) = Text(text, color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 16.dp))
+@Composable fun BigText(text: String, color: Color = Color.Black) = Text(text, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = color, modifier = Modifier.fillMaxWidth())
+@Composable fun SentenceText(sentence: String?, word: String) {
+    val display = sentence?.replace(word, "_______", ignoreCase = true) ?: "_______"
+    Text(display, fontSize = 20.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, color = Color.DarkGray, lineHeight = 28.sp)
+}
+
+fun generateHint(word: String): String {
+    if (word.length <= 2) return "_ ".repeat(word.length)
+    val chars = word.toCharArray()
+    for (i in chars.indices) {
+        if (i % 2 != 0) chars[i] = '_'
+    }
+    return String(chars).replace("", " ").trim()
+}
+

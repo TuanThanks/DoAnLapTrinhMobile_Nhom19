@@ -49,6 +49,7 @@ dependencies {
     implementation("io.github.jan-tennert.supabase:gotrue-kt")
     implementation("io.github.jan-tennert.supabase:postgrest-kt")
     implementation("androidx.core:core-splashscreen:1.0.1")
+    implementation("com.google.mlkit:translate:17.0.1")
 
 // ------------------------
 // Ktor

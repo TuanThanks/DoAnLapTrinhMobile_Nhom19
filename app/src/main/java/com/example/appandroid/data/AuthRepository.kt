@@ -11,19 +11,9 @@ import kotlinx.serialization.json.put
 
 
 class AuthRepository {
+    private val supabase = SupabaseClient.client
     val currentUser
         get() = supabase.auth.currentUserOrNull()
-
-    // Gọi client Supabase đã tạo ở bước 2
-    private val supabase = SupabaseClient.client
-
-    // Kiểm tra xem có user đang đăng nhập không
-    // Lưu ý: Supabase lưu session ở cache, hàm này load user từ session đó
-    suspend fun getCurrentUser(): Boolean {
-        // Load session từ bộ nhớ máy (nếu có)
-        supabase.auth.loadFromStorage()
-        return supabase.auth.currentUserOrNull() != null
-    }
 
     // Đăng nhập
     suspend fun login(email: String, pass: String): Result<Unit> {
@@ -68,8 +58,6 @@ class AuthRepository {
         }
     }
     // Quên mật khẩu
-// Sửa lại hàm gửi mail quên mật khẩu
-// Trong AuthRepository
     suspend fun sendPasswordResetEmail(email: String, redirectUrl: String) {
         supabase.auth.resetPasswordForEmail(
             email = email,
@@ -79,17 +67,6 @@ class AuthRepository {
 
     fun getCurrentUserId(): String? {
         return supabase.auth.currentUserOrNull()?.id
-    }
-    suspend fun retrieveUserSession(): Boolean {
-        return try {
-            // Quan trọng: Lệnh này khôi phục phiên đăng nhập từ bộ nhớ máy
-            supabase.auth.loadFromStorage()
-
-            // Kiểm tra xem có session hợp lệ không
-            supabase.auth.currentSessionOrNull() != null
-        } catch (e: Exception) {
-            false
-        }
     }
     suspend fun logout() {
         try {

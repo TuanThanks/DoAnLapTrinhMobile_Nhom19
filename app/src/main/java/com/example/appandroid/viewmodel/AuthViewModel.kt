@@ -8,11 +8,14 @@ import com.example.appandroid.data.AuthRepository
 import com.example.appandroid.data.SupabaseClient
 import com.example.appandroid.navigation.ScreenRoutes
 import com.example.appandroid.utils.UserRole
+import io.github.jan.supabase.gotrue.SessionStatus
 import io.github.jan.supabase.gotrue.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -28,6 +31,8 @@ data class UserProfileRole(
     val role: String = "user" // Mặc định là user
 )
 class AuthViewModel : ViewModel() {
+    private val _navigateToResetPassword = MutableSharedFlow<Boolean>()
+    val navigateToResetPassword = _navigateToResetPassword.asSharedFlow()
 
     // Biến lưu role hiện tại (Mặc định là Guest)
     private val _userRole = MutableStateFlow(UserRole.GUEST)
@@ -38,13 +43,30 @@ class AuthViewModel : ViewModel() {
     val authState: StateFlow<AuthState> = _authState
     // Biến trạng thái kiểm tra đăng nhập (null = đang kiểm tra, true = đã login, false = chưa)
     private val _isUserLoggedIn = MutableStateFlow<Boolean?>(null)
-    val isUserLoggedIn: StateFlow<Boolean?> = _isUserLoggedIn
     init {
-        // Kiểm tra xem máy có lưu phiên đăng nhập cũ không?
+        // 1. Kiểm tra session cũ (giữ lại để load nhanh lúc mới vào)
         val currentSession = SupabaseClient.client.auth.currentSessionOrNull()
         if (currentSession != null) {
-            // Nếu có -> Lấy Role ngay lập tức
             fetchUserRole(currentSession.user?.id ?: "")
+        }
+
+        // 2. [QUAN TRỌNG] Lắng nghe sự thay đổi trạng thái đăng nhập liên tục
+        // Đoạn này giúp App tự động cập nhật Role ngay khi Deep Link đăng nhập thành công
+        viewModelScope.launch {
+            SupabaseClient.client.auth.sessionStatus.collect { status ->
+                if (status is SessionStatus.Authenticated) {
+                    // Khi đăng nhập thành công (bất kể nguồn nào) -> Lấy Role
+                    val userId = status.session.user?.id
+                    if (userId != null) {
+                        Log.d("AuthViewModel", "Session update: $userId -> Fetching Role")
+                        fetchUserRole(userId)
+                    }
+                } else if (status is SessionStatus.NotAuthenticated) {
+                    // Khi đăng xuất -> Về Guest
+                    Log.d("AuthViewModel", "Session update: Logout -> Guest")
+                    _userRole.value = UserRole.GUEST
+                }
+            }
         }
     }
     // Hàm set Guest Mode
@@ -158,12 +180,6 @@ class AuthViewModel : ViewModel() {
             onResult(success)
         }
     }
-    
-    fun logout() {
-        viewModelScope.launch {
-            repository.logout()
-        }
-    }
 
     // Hàm reset trạng thái (để tránh lỗi hiển thị Toast nhiều lần)
     fun resetState() {
@@ -173,17 +189,26 @@ class AuthViewModel : ViewModel() {
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             val result = repository.loginWithGoogle(idToken)
+
             result.onSuccess {
+                // --- SỬA LỖI Ở ĐÂY ---
+                // Sau khi Google Login thành công, phải lấy ID và cập nhật Role ngay
+                val currentUser = SupabaseClient.client.auth.currentUserOrNull()
+                val userId = currentUser?.id
+
+                if (userId != null) {
+                    // Cập nhật biến _userRole để màn hình Profile biết là User thật
+                    fetchUserRole(userId)
+
+                    // Cập nhật thêm trạng thái đăng nhập
+                    _isUserLoggedIn.value = true
+                }
+                // ---------------------
+
                 _authState.value = AuthState.Success
             }.onFailure {
                 _authState.value = AuthState.Error("Lỗi Google: ${it.message}")
             }
-        }
-    }
-    fun checkLoginStatus() {
-        viewModelScope.launch {
-            val isLoggedIn = repository.retrieveUserSession()
-            _isUserLoggedIn.value = isLoggedIn
         }
     }
     fun getCurrentUserEmail(): String? {

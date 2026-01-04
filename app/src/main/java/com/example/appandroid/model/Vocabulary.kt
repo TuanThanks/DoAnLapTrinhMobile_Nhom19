@@ -25,5 +25,7 @@ data class Vocabulary(
     val imageUrl: String?,
 
     @SerialName("audio_url")
-    val audioUrl: String?
+    val audioUrl: String?,
+    var currentLevel: Int = 1
+
 )

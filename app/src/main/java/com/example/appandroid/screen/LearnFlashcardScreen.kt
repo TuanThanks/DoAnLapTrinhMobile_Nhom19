@@ -6,6 +6,7 @@ import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,19 +43,21 @@ import com.example.appandroid.model.Vocabulary
 import com.example.appandroid.screen.components.MochiYellow
 import com.example.appandroid.utils.SoundManager
 import com.example.appandroid.viewmodel.LearnViewModel
-import com.example.appandroid.utils.ReminderScheduler
 import nl.dionsegijn.konfetti.compose.KonfettiView
 import nl.dionsegijn.konfetti.core.Party
 import nl.dionsegijn.konfetti.core.emitter.Emitter
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import nl.dionsegijn.konfetti.core.Position
+import com.example.appandroid.R
+import com.example.appandroid.screen.component.MochiProgressBar
+import com.example.appandroid.utils.LearningStep
 
 
 
-// --- BẢNG MÀU CHUẨN ---
 val MochiTextDark = Color(0xFF333333)
 val MochiGrayBg = Color(0xFFF2F2F2)
+val MochiYellow = Color(0xFFFFC107)
 
 @RequiresApi(Build.VERSION_CODES.O)
 @Composable
@@ -65,205 +68,254 @@ fun FlashcardScreen(
 ) {
     val context = LocalContext.current
 
-    // --- 1. DATA & STATE ---
+    // --- 1. DATA TỪ VIEWMODEL ---
     val vocabList by viewModel.vocabList.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
-    var currentIndex by remember { mutableIntStateOf(0) }
-    val currentVocab = vocabList.getOrNull(currentIndex)
+    val currentIndex by viewModel.currentLessonIndex.collectAsState()
+    val currentStep by viewModel.currentStep.collectAsState()
 
-    // --- 2. KHỞI TẠO CÁC BỘ QUẢN LÝ (MANAGERS) ---
 
-    // SoundManager (Tiếng Flip, Ting, Èo)
+    // --- 2. QUẢN LÝ ÂM THANH (TTS & MediaPlayer) ---
     val soundManager = remember { SoundManager(context) }
-
-    // TextToSpeech (Chị Google - Dùng để đọc chậm hoặc dự phòng)
     var tts: TextToSpeech? by remember { mutableStateOf(null) }
-
-    // MediaPlayer (Dùng để phát file MP3 xịn từ URL)
     val mediaPlayer = remember { android.media.MediaPlayer() }
 
-    // --- 3. LIFECYCLE (KHỞI TẠO & DỌN DẸP) ---
-
-    // Load dữ liệu bài học
-    LaunchedEffect(lessonId) {
-        viewModel.loadVocabularies(lessonId)
-    }
-
-    // Khởi tạo TTS
     LaunchedEffect(Unit) {
         tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
-            }
+            if (status == TextToSpeech.SUCCESS) tts?.language = Locale.US
         }
     }
 
-    // Dọn dẹp bộ nhớ khi thoát màn hình (Quan trọng!)
+// 2. Cấu hình TTS và MediaPlayer (Copy y nguyên từ ReviewFlashcardScreen sang)
     DisposableEffect(Unit) {
+        val textToSpeech = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) tts?.language = Locale.US
+        }
+        tts = textToSpeech
         onDispose {
-            soundManager.release() // Giải phóng SoundPool
-            tts?.stop()
-            tts?.shutdown()        // Giải phóng TTS
-            mediaPlayer.release()  // Giải phóng MediaPlayer
+            textToSpeech.stop()
+            textToSpeech.shutdown()
+            mediaPlayer.release() // Đừng quên giải phóng
         }
     }
 
-    // --- 4. LOGIC PHÁT ÂM THANH THÔNG MINH ---
+    // Hàm phát âm thanh (Dùng chung cho cả màn hình)
     fun playAudio(url: String?, word: String) {
-        // Bước 1: Kiểm tra có link MP3 xịn không?
         if (!url.isNullOrBlank()) {
             try {
-                mediaPlayer.reset() // Reset để sẵn sàng phát bài mới
-                mediaPlayer.setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                        .build()
-                )
+                mediaPlayer.reset()
                 mediaPlayer.setDataSource(url)
-                mediaPlayer.prepareAsync() // Chuẩn bị bất đồng bộ (tránh đơ UI)
-
-                mediaPlayer.setOnPreparedListener { it.start() } // Tải xong thì phát
-
-                // Nếu tải MP3 bị lỗi -> Chuyển sang dùng TTS
+                mediaPlayer.prepareAsync()
+                mediaPlayer.setOnPreparedListener { it.start() }
                 mediaPlayer.setOnErrorListener { _, _, _ ->
                     tts?.speak(word, TextToSpeech.QUEUE_FLUSH, null, null)
                     true
                 }
             } catch (e: Exception) {
-                // Lỗi khởi tạo -> Dùng TTS
                 tts?.speak(word, TextToSpeech.QUEUE_FLUSH, null, null)
             }
         } else {
-            // Bước 2: Không có link -> Dùng TTS ngay lập tức
             tts?.speak(word, TextToSpeech.QUEUE_FLUSH, null, null)
         }
     }
 
-    // --- 5. ANIMATION ---
+    LaunchedEffect(lessonId) {
+        viewModel.loadVocabularies(lessonId)
+    }
+
+    // --- 3. ĐIỀU HƯỚNG MÀN HÌNH (STATE MACHINE) ---
+    if (isLoading) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = MochiYellow)
+        }
+    } else if (vocabList.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("Chưa có từ vựng!", color = Color.Gray)
+        }
+    } else if (currentIndex >= vocabList.size) {
+        // Đã học xong hết các từ -> Màn hình tổng kết
+        LaunchedEffect(Unit) {
+            viewModel.markLessonAsCompleted(lessonId) // <--- GỌI HÀM NÀY
+
+            // Logic nhắc nhở cũ
+            if (com.example.appandroid.utils.LocalStorage.isReminderEnabled(context)) {
+                com.example.appandroid.utils.ReminderScheduler.scheduleNextReminder(context)
+            }
+        }
+        FinishScreen(onBack = { navController.popBackStack() }, soundManager = soundManager)
+    } else {
+        // Lấy từ vựng hiện tại
+        val currentVocab = vocabList[currentIndex]
+
+// QUYẾT ĐỊNH HIỂN THỊ MÀN HÌNH NÀO
+// QUYẾT ĐỊNH HIỂN THỊ MÀN HÌNH NÀO
+        when (currentStep) {
+            LearningStep.FLASHCARD -> {
+                // --- [BẮT ĐẦU THÊM: TỰ ĐỘNG PHÁT LOA] ---
+                LaunchedEffect(currentVocab) {
+                    // Delay 300ms để màn hình chuyển cảnh xong mới đọc cho mượt
+                    kotlinx.coroutines.delay(300)
+                    playAudio(currentVocab.audioUrl, currentVocab.word)
+                }
+                // --- [KẾT THÚC THÊM] ---
+
+                FlashcardContent(
+                    vocab = currentVocab,
+                    currentIndex = currentIndex,
+                    total = vocabList.size,
+                    viewModel = viewModel,
+                    onPlayAudio = { playAudio(currentVocab.audioUrl, currentVocab.word) },
+                    onSlowSpeak = { /* Xử lý đọc chậm nếu muốn */ },
+                    onContinue = { viewModel.moveToNextStep() },
+                    onKnown = { viewModel.onKnowWord() },
+                    onBack = { navController.popBackStack() },
+                    soundManager = soundManager
+                )
+            }
+            LearningStep.DICTATION -> {
+                DictationScreen(
+                    vocab = currentVocab,
+                    onCorrect = { viewModel.moveToNextStep() },
+                    onWrong = { viewModel.markAsWrong(currentVocab) },
+                    playAudio = { playAudio(currentVocab.audioUrl, currentVocab.word) },
+                    onClose = { navController.popBackStack() },
+                    viewModel = viewModel
+                )
+            }
+            LearningStep.QUIZ -> {
+                QuizScreen(
+                    viewModel = viewModel,
+                    vocab = currentVocab,
+                    playAudio = { playAudio(currentVocab.audioUrl, currentVocab.word) },
+                    onClose = { navController.popBackStack() }
+                )
+            }
+            else -> {}
+        }
+
+    }
+}
+// ... (Các phần imports giữ nguyên)
+
+@Composable
+fun FlashcardContent(
+    vocab: Vocabulary,
+    currentIndex: Int,
+    total: Int,
+    onPlayAudio: () -> Unit,
+    onSlowSpeak: () -> Unit,
+    onContinue: () -> Unit,
+    onKnown: () -> Unit,
+    viewModel: LearnViewModel,
+    onBack: () -> Unit,
+    soundManager: SoundManager
+) {
+    // Animation Lật
     var isFlipped by remember { mutableStateOf(false) }
     val rotation by animateFloatAsState(
         targetValue = if (isFlipped) 180f else 0f,
-        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        animationSpec = tween(400, easing = FastOutSlowInEasing),
         label = "flip"
     )
 
-    // Reset lật thẻ khi qua từ mới
-    LaunchedEffect(currentIndex) { isFlipped = false }
+    // Reset lật khi đổi từ
+    LaunchedEffect(vocab) { isFlipped = false }
 
-    val interactionSource = remember { MutableInteractionSource() }
+    Scaffold(
+        topBar = {
+            // THANH PROGRESS MỚI
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 1. NÚT THOÁT
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.Gray)
+                }
 
-    // --- 6. GIAO DIỆN (UI) ---
-    Scaffold(containerColor = MochiGrayBg) { padding ->
-        if (isLoading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = MochiYellow)
+                // --- ĐÃ XÓA CÁI IMAGE THỪA Ở ĐÂY ---
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 2. THANH TIẾN ĐỘ (Đã bao gồm icon chạy bên trong)
+                MochiProgressBar(
+                    currentStep = viewModel.getCurrentProgressStep(),
+                    totalSteps = viewModel.getTotalProgressSteps(),
+                    modifier = Modifier.weight(1f)
+                )
             }
-        } else if (vocabList.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Chưa có từ vựng!", color = Color.Gray)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = { navController.popBackStack() }) { Text("Quay lại") }
-                }
-            }
-        } else if (currentIndex >= vocabList.size) {
-            // 1. Gọi lệnh lên lịch nhắc nhở (Reset đồng hồ đếm ngược 24h)
-            LaunchedEffect(Unit) {
-                // Chỉ reset lịch nếu người dùng ĐANG BẬT tính năng này
-                if (com.example.appandroid.utils.LocalStorage.isReminderEnabled(context)) {
-                    com.example.appandroid.utils.ReminderScheduler.scheduleNextReminder(context)
-                }
-            }
-            FinishScreen(
-                onBack = { navController.popBackStack() },
-                soundManager = soundManager
-            )
-        } else {
-            currentVocab?.let { vocab ->
-                Column(
+        },
+        containerColor = MochiGrayBg
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .padding(bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // --- KHU VỰC THẺ & LOA ---
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                // 1. THẺ LẬT (NẰM DƯỚI)
+                Card(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding)
-                        .padding(bottom = 16.dp)
-                ) {
-                    FlashcardHeader(
-                        progress = (currentIndex + 1).toFloat() / vocabList.size,
-                        onClose = { navController.popBackStack() }
-                    )
-
-                    // KHU VỰC THẺ TỪ
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 4.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    rotationY = rotation
-                                    cameraDistance = 12f * density
-                                }
-                                .clickable(
-                                    interactionSource = interactionSource,
-                                    indication = null
-                                ) {
-                                    isFlipped = !isFlipped
-                                    soundManager.playFlip() // Âm thanh lật thẻ
-                                },
-                            shape = RoundedCornerShape(24.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                        .graphicsLayer {
+                            rotationY = rotation
+                            cameraDistance = 12f * density
+                        }
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
                         ) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                if (rotation <= 90f) {
-                                    // MẶT TRƯỚC
-                                    FrontCardDesign(
-                                        vocab = vocab,
-                                        // Dùng hàm playAudio xịn
-                                        onSpeak = { playAudio(vocab.audioUrl, vocab.word) },
-                                        // Loa chậm vẫn dùng TTS cho ổn định
-                                        onSlowSpeak = {
-                                            tts?.setSpeechRate(0.5f)
-                                            tts?.speak(vocab.word, TextToSpeech.QUEUE_FLUSH, null, null)
-                                            tts?.setSpeechRate(1.0f)
-                                        }
-                                    )
-                                } else {
-                                    // MẶT SAU
-                                    Box(modifier = Modifier.graphicsLayer { rotationY = 180f }) {
-                                        BackCardDesign(
-                                            vocab = vocab,
-                                            // Dùng hàm playAudio xịn
-                                            onSpeak = { playAudio(vocab.audioUrl, vocab.word) },
-                                            onSlowSpeak = {
-                                                tts?.setSpeechRate(0.5f)
-                                                tts?.speak(vocab.word, TextToSpeech.QUEUE_FLUSH, null, null)
-                                                tts?.setSpeechRate(1.0f)
-                                            }
-                                        )
-                                    }
-                                }
-                            }
+                            isFlipped = !isFlipped
+                            soundManager.playFlip()
+                        },
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                    elevation = CardDefaults.cardElevation(0.dp)
+                ) {
+                    if (rotation <= 90f) {
+                        FrontCardContent(vocab) // Mặt trước
+                    } else {
+                        Box(modifier = Modifier.graphicsLayer { rotationY = 180f }) {
+                            BackCardContent(vocab) // Mặt sau
                         }
                     }
+                }
 
-                    // FOOTER
-                    FlashcardFooter(
-                        onNext = {
-                            viewModel.markAsLearned(vocab.id, false)
-                            currentIndex++
-                        },
-                        onKnown = {
-                            viewModel.markAsLearned(vocab.id, true)
-                            currentIndex++
-                        }
-                    )
+                // 2. LOA NỔI (NẰM TRÊN - KHÔNG XOAY)
+                // Loa Thường
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(start = 16.dp, top = 16.dp)
+                ) {
+                    FloatingAudioButton(onClick = onPlayAudio, isSlow = false)
+                }
+
+                // Loa Chậm
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(end = 16.dp, top = 16.dp)
+                ) {
+                    FloatingAudioButton(onClick = onSlowSpeak, isSlow = true)
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // --- NÚT BẤM ---
+            FlashcardFooter(onNext = onContinue, onKnown = onKnown)
         }
     }
 }
@@ -604,6 +656,82 @@ fun FinishScreen(
         KonfettiView(
             modifier = Modifier.fillMaxSize(),
             parties = listOf(party)
+        )
+    }
+}
+@Composable
+fun BackCardContent(vocab: Vocabulary) {
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(6.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(vocab.word, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MochiTextDark)
+            Text(vocab.phonetic ?: "", fontSize = 18.sp, color = Color.Gray)
+            Spacer(modifier = Modifier.height(24.dp))
+            Divider(color = Color.LightGray, thickness = 1.dp, modifier = Modifier.width(100.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(vocab.meaning, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1976D2))
+        }
+    }
+}
+// --- Mặt Trước (Chỉ còn ảnh & câu ví dụ - Loa đã tách ra) ---
+@Composable
+fun FrontCardContent(vocab: Vocabulary) {
+    Card(
+        modifier = Modifier.fillMaxSize(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(6.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(40.dp)) // Chừa chỗ cho loa
+
+            // Ảnh
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(vocab.imageUrl)
+                        .crossfade(true).build(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Câu ví dụ
+            HighlightedSentence(vocab.exampleSentence ?: "", vocab.word)
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+// --- Nút Loa Nổi ---
+@Composable
+fun FloatingAudioButton(onClick: () -> Unit, isSlow: Boolean) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(48.dp)
+            .shadow(4.dp, CircleShape)
+            .background(Color.White, CircleShape)
+            .border(1.dp, if(isSlow) Color.Gray else MochiYellow, CircleShape)
+    ) {
+        Icon(
+            imageVector = Icons.Default.VolumeUp,
+            contentDescription = null,
+            tint = if(isSlow) Color.Gray else Color(0xFFFF8F00),
+            modifier = Modifier.size(24.dp)
         )
     }
 }

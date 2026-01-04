@@ -24,8 +24,6 @@ import com.example.appandroid.screen.ProfileScreen
 import com.example.appandroid.screen.RegisterScreenFirst
 import com.example.appandroid.screen.RegisterScreenSecond
 import com.example.appandroid.screen.ReviewFlashcardScreen
-import com.example.appandroid.screen.ReviewScreen
-import com.example.appandroid.screen.SplashScreen
 import com.example.appandroid.viewmodel.AuthViewModel
 import com.example.appandroid.viewmodel.LearnViewModel
 
@@ -56,11 +54,7 @@ fun AppNavigation(startDestination: String = ScreenRoutes.SPLASH) {
     // Khởi tạo ViewModel ở cấp độ Navigation để dùng chung hoặc truyền xuống
     val authViewModel: AuthViewModel = viewModel()
     val learnViewModel: LearnViewModel = viewModel()
-
     NavHost(navController = navController, startDestination = startDestination) {
-        composable(ScreenRoutes.SPLASH) {
-            SplashScreen(navController = navController, authViewModel = authViewModel)
-        }
         composable(ScreenRoutes.LOGIN) {
             LoginScreen(navController = navController, viewModel = authViewModel)
         }
@@ -120,8 +114,8 @@ fun AppNavigation(startDestination: String = ScreenRoutes.SPLASH) {
         }
 // 2. Màn hình Ôn tập (Review)
         composable(ScreenRoutes.REVIEW) {
-            // Gọi màn hình ReviewFlashcardScreen mới tạo
-            ReviewFlashcardScreen(navController = navController, viewModel = learnViewModel)
+            // Trỏ nó sang màn hình mới "xịn" hơn mà ta vừa làm
+            ReviewFlashcardScreen(navController, learnViewModel)
         }
         composable(ScreenRoutes.DICTIONARY) {
             DictionaryScreen(navController = navController, viewModel = learnViewModel)
